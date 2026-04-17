@@ -239,6 +239,11 @@
             100% { transform: rotate(360deg); }
         }
 
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scaleX(1); }
+            50% { opacity: 0.4; transform: scaleX(1.5); }
+        }
+
         .error-message {
             background-color: #331f1f;
             border: 1px solid #722f2f;
@@ -6787,7 +6792,77 @@
             // Arkadaşlık isteklerini anlık dinle
             setupFriendRequestListener();
 
+            // Bakım modunu anlık dinle
+            setupMaintenanceListener();
+
+            // Kullanıcının rolünü anlık dinle
+            setupRoleListener();
+
             console.log('🎉 H-Sound ready!');
+        }
+
+        // Bakım modunu anlık izle — açılınca overlay göster
+        let maintenanceUnsubscribe = null;
+        function setupMaintenanceListener() {
+            if (!window._firebaseReady || !window.db) return;
+            const currentRole = localStorage.getItem('h_sound_role') || '';
+            if (maintenanceUnsubscribe) { maintenanceUnsubscribe(); maintenanceUnsubscribe = null; }
+
+            maintenanceUnsubscribe = window.db.collection('settings').doc('maintenance')
+                .onSnapshot(doc => {
+                    const isOn = doc.exists && doc.data().enabled === true;
+                    const role = localStorage.getItem('h_sound_role') || '';
+                    const existing = document.getElementById('maintenance-overlay');
+
+                    if (isOn && role !== 'superadmin') {
+                        if (!existing) {
+                            const overlay = document.createElement('div');
+                            overlay.id = 'maintenance-overlay';
+                            overlay.style.cssText = `
+                                position:fixed;top:0;left:0;width:100%;height:100%;
+                                background:rgba(0,0,0,0.92);z-index:99999;
+                                display:flex;flex-direction:column;align-items:center;justify-content:center;
+                                color:white;text-align:center;padding:30px;box-sizing:border-box;
+                            `;
+                            overlay.innerHTML = `
+                                <div style="font-size:64px;margin-bottom:20px;">🔧</div>
+                                <h1 style="color:#E67E22;font-size:28px;margin:0 0 12px;">Bakım Modu</h1>
+                                <p style="color:#A9A9A9;font-size:16px;max-width:400px;line-height:1.6;">
+                                    H-Sound şu an bakım modunda.<br>Kısa süre içinde geri döneceğiz.
+                                </p>
+                                <div style="margin-top:30px;width:40px;height:4px;background:#E67E22;border-radius:2px;animation:pulse 1.5s infinite;"></div>
+                            `;
+                            document.body.appendChild(overlay);
+                        }
+                    } else {
+                        if (existing) existing.remove();
+                    }
+                }, () => {});
+        }
+
+        // Kullanıcının rolünü Firebase'den anlık izle
+        let roleUnsubscribe = null;
+        function setupRoleListener() {
+            if (!window._firebaseReady || !window.db) return;
+            const uid = localStorage.getItem('h_sound_uid');
+            if (!uid) return;
+            if (roleUnsubscribe) { roleUnsubscribe(); roleUnsubscribe = null; }
+
+            roleUnsubscribe = window.db.collection('users').doc(uid)
+                .onSnapshot(doc => {
+                    if (!doc.exists) return;
+                    const newRole = doc.data().role || 'user';
+                    const displayRole = normalizeRole(newRole);
+                    localStorage.setItem('h_sound_role', newRole);
+                    localStorage.setItem('h_sound_user_role', displayRole);
+                    // Ayarlar sayfası açıksa yenile
+                    if (currentView === 'settings') showSettingsPage();
+                    // Superadmin linkini güncelle
+                    if (superadminLink) {
+                        if (displayRole === 'Süper Admin') superadminLink.classList.remove('hidden');
+                        else superadminLink.classList.add('hidden');
+                    }
+                }, () => {});
         }
 
         // Firebase'de Hakan hesabını superadmin olarak ayarla
