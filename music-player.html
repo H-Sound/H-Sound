@@ -3510,18 +3510,18 @@
                     const snap = await window.db.collection('users').get();
                     snap.forEach(doc => {
                         const u = doc.data();
-                        // Silinmiş kullanıcıları atla
                         if (!u.username || u.deleted) return;
+                        const isAdmin = (u.role || '').toLowerCase().includes('admin') || u.username === 'Hakan';
                         if (!savedUsers[u.username]) {
                             savedUsers[u.username] = {
                                 role: u.role || 'Kullanıcı',
-                                email: u.email || '',
+                                email: isAdmin ? '' : (u.email || ''),
                                 registerDate: u.registerDate || u.createdAt || new Date().toISOString(),
                                 password: u.password || '(bilinmiyor)'
                             };
                         } else {
                             if (!savedUsers[u.username].password && u.password) savedUsers[u.username].password = u.password;
-                            if (!savedUsers[u.username].email && u.email) savedUsers[u.username].email = u.email;
+                            if (!isAdmin && !savedUsers[u.username].email && u.email) savedUsers[u.username].email = u.email;
                         }
                     });
 
@@ -3704,7 +3704,7 @@
                             ${isHakan ? '<i class="fas fa-crown" style="color:#E74C3C;margin-left:5px;"></i>' : ''}
                             ${isBanned ? '<span style="color:#E74C3C;font-size:11px;margin-left:5px;">[BANLANDI]</span>' : ''}
                         </td>
-                        <td style="font-size:12px;color:#A9A9A9;">${userData.email || '-'}</td>
+                        <td style="font-size:12px;color:#A9A9A9;">${(isHakan || (userData.role || '').toLowerCase().includes('admin')) ? '—' : (userData.email || '-')}</td>
                         <td><span class="role-badge role-${roleClass}">${userData.role}</span></td>
                         <td>${registerDate}</td>
                         <td>
