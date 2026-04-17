@@ -281,8 +281,18 @@
                 }
                 
                 // Banlı veya silinmiş kullanıcı kontrolü
-                if (userData.banned || userData.deleted) {
-                    alert('❌ Hesabınız askıya alınmış veya silinmiş. Lütfen yönetici ile iletişime geçin.');
+                if (userData.banned) {
+                    alert('❌ Hesabınız askıya alınmış. Lütfen yönetici ile iletişime geçin.');
+                    return;
+                }
+
+                // Silinmiş kullanıcı — Auth'dan da temizle (e-posta tekrar kullanılabilsin)
+                if (userData.deleted) {
+                    try {
+                        const cred = await auth.signInWithEmailAndPassword(userData.email, password);
+                        await cred.user.delete();
+                    } catch(e) {}
+                    alert('❌ Bu hesap silinmiş. Yeni bir hesap oluşturabilirsiniz.');
                     return;
                 }
                 
@@ -357,7 +367,7 @@
                     return;
                 }
                 const usernameCheck = await db.collection('users').where('username', '==', username).limit(1).get();
-                if (!usernameCheck.empty) {
+                if (!usernameCheck.empty && !usernameCheck.docs[0].data().deleted) {
                     alert('Bu kullanıcı adı zaten kullanılıyor!');
                     return;
                 }
