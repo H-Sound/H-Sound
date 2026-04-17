@@ -1769,7 +1769,7 @@
                 <li><a href="#" id="home-link" class="active"><i class="fas fa-home"></i> Ana Sayfa</a></li>
                 <li><a href="#" id="search-link"><i class="fas fa-search"></i> Ara</a></li>
                 <li><a href="#" id="playlists-link"><i class="fas fa-compact-disc"></i> Çalma Listeleri</a></li>
-                <li><a href="#" id="friends-link"><i class="fas fa-users"></i> Arkadaşlar</a></li>
+                <li><a href="#" id="friends-link"><i class="fas fa-users"></i> Arkadaşlar <span id="friend-req-badge" style="display:none;background:#E74C3C;color:white;border-radius:50%;padding:1px 6px;font-size:11px;margin-left:4px;"></span></a></li>
                 <li><a href="#" id="downloads-link"><i class="fas fa-download"></i> İndirilenler</a></li>
                 <li><a href="#" id="recently-played-link"><i class="fas fa-history"></i> Son Dinlenenler</a></li>
                 <li><a href="#" id="settings-link"><i class="fas fa-cog"></i> Ayarlar</a></li>
@@ -1931,18 +1931,19 @@
                 firebase.initializeApp(firebaseConfig);
                 window.auth = firebase.auth();
                 window.db = firebase.firestore();
+                window._firebaseReady = true;
                 console.log('🔥 Firebase initialized and ready!');
             } catch (error) {
                 console.log('⚠️ Firebase initialization failed:', error.message);
-                // Mock Firebase servisleri
                 window.auth = { currentUser: null };
-                window.db = { collection: () => ({ add: () => Promise.resolve(), get: () => Promise.resolve({ empty: true, docs: [] }) }) };
+                window.db = null;
+                window._firebaseReady = false;
             }
         } else {
-            console.log('ℹ️ Firebase not supported on file:// protocol - Using mock services');
-            // Mock Firebase servisleri
+            console.log('ℹ️ Firebase not supported on file:// protocol');
             window.auth = { currentUser: null };
-            window.db = { collection: () => ({ add: () => Promise.resolve(), get: () => Promise.resolve({ empty: true, docs: [] }) }) };
+            window.db = null;
+            window._firebaseReady = false;
         }
     </script>
 
@@ -2553,6 +2554,8 @@
             if (activeLink) {
                 activeLink.classList.add('active');
             }
+            // Aktif menüyü session'a kaydet (yenileme sonrası geri dön)
+            sessionStorage.setItem('h_sound_current_view', currentView);
         }
 
         function clearContentArea() {
@@ -2967,7 +2970,8 @@
                     
                     <div class="settings-sections">
                         <!-- Uygulamayı Yükle -->
-                        <div class="settings-section">
+                        ${window.matchMedia('(display-mode: standalone)').matches || localStorage.getItem('h_sound_pwa_installed') === 'true' ? '' : `
+                        <div class="settings-section" id="pwa-install-section">
                             <h3><i class="fas fa-download"></i> Uygulamayı Yükle</h3>
                             <div class="settings-items">
                                 <div class="setting-item">
@@ -2981,6 +2985,7 @@
                                 </div>
                             </div>
                         </div>
+                        `}
 
                         <!-- Hesap Bilgileri -->
                         <div class="settings-section">
@@ -3426,7 +3431,6 @@
                                     password: u.password || '(bilinmiyor)'
                                 };
                             } else if (!savedUsers[u.username].password && u.password) {
-                                // localStorage'da şifre yoksa Firebase'den al
                                 savedUsers[u.username].password = u.password;
                             }
                         }
@@ -3446,6 +3450,24 @@
                     <div class="admin-header">
                         <h1><i class="fas fa-crown"></i> Süper Admin Panel</h1>
                         <p>H-Sound Sistem Yönetimi - Hoş geldiniz, ${localStorage.getItem('h_sound_username')}</p>
+                    </div>
+
+                    <!-- Bakım Modu -->
+                    <div class="settings-section" style="margin-bottom:24px;background:#1C1C1C;border-radius:10px;padding:20px;border:1px solid #2C2C2C;">
+                        <h3 style="margin:0 0 15px;color:#E67E22;"><i class="fas fa-tools"></i> Bakım Modu</h3>
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                            <div>
+                                <div style="font-weight:600;">Site Bakım Modu</div>
+                                <div style="font-size:13px;color:#A9A9A9;">Aktifken sadece süper admin giriş yapabilir, yeni kayıt kapalı olur.</div>
+                            </div>
+                            <div style="display:flex;gap:10px;align-items:center;">
+                                <span id="maintenance-status-text" style="font-size:13px;color:#A9A9A9;">Kontrol ediliyor...</span>
+                                <button id="maintenance-toggle-btn" onclick="toggleMaintenanceMode()" 
+                                    style="padding:10px 20px;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:14px;background:#555;color:white;">
+                                    <i class="fas fa-spinner fa-spin"></i> Yükleniyor
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="admin-stats">
@@ -3494,12 +3516,81 @@
                     </div>
                 </div>
             `;
+
+            // Bakım modu durumunu yükle
+            loadMaintenanceStatus();
+        }
+
+        // Bakım modu durumunu yükle ve butonu güncelle
+        async function loadMaintenanceStatus() {
+            const btn = document.getElementById('maintenance-toggle-btn');
+            const txt = document.getElementById('maintenance-status-text');
+            if (!btn || !txt) return;
+
+            if (!window._firebaseReady || !window.db) {
+                txt.textContent = 'Firebase bağlantısı yok';
+                btn.style.display = 'none';
+                return;
+            }
+
+            try {
+                const doc = await window.db.collection('settings').doc('maintenance').get();
+                const isOn = doc.exists && doc.data().enabled === true;
+                updateMaintenanceBtn(isOn);
+            } catch(e) {
+                txt.textContent = 'Yüklenemedi: ' + e.message;
+            }
+        }
+
+        function updateMaintenanceBtn(isOn) {
+            const btn = document.getElementById('maintenance-toggle-btn');
+            const txt = document.getElementById('maintenance-status-text');
+            if (!btn || !txt) return;
+            if (isOn) {
+                txt.innerHTML = '<span style="color:#E74C3C;font-weight:600;">🔴 Bakım Modu AÇIK</span>';
+                btn.style.background = '#27AE60';
+                btn.innerHTML = '<i class="fas fa-toggle-on"></i> Kapat';
+            } else {
+                txt.innerHTML = '<span style="color:#27AE60;font-weight:600;">🟢 Site Normal</span>';
+                btn.style.background = '#E67E22';
+                btn.innerHTML = '<i class="fas fa-toggle-off"></i> Bakıma Al';
+            }
+        }
+
+        async function toggleMaintenanceMode() {
+            if (!window._firebaseReady || !window.db) {
+                showNotification('Firebase bağlantısı gerekli!', 'error');
+                return;
+            }
+            const btn = document.getElementById('maintenance-toggle-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+            try {
+                const doc = await window.db.collection('settings').doc('maintenance').get();
+                const isOn = doc.exists && doc.data().enabled === true;
+                await window.db.collection('settings').doc('maintenance').set({ enabled: !isOn });
+                updateMaintenanceBtn(!isOn);
+                showNotification(isOn ? '✅ Bakım modu kapatıldı' : '🔧 Bakım modu açıldı', isOn ? 'success' : 'warning');
+            } catch(e) {
+                showNotification('Hata: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         // Kullanıcı tablosu satırları oluştur
         function generateUsersTableRows(users) {
             let rows = '';
-            Object.entries(users).forEach(([username, userData]) => {
+            // Süper admin her zaman en üstte
+            const sorted = Object.entries(users).sort(([, a], [, b]) => {
+                const isSuperA = (a.role || '').toLowerCase().includes('admin');
+                const isSuperB = (b.role || '').toLowerCase().includes('admin');
+                if (isSuperA && !isSuperB) return -1;
+                if (!isSuperA && isSuperB) return 1;
+                return 0;
+            });
+            sorted.forEach(([username, userData]) => {
                 const roleClass = userData.role.toLowerCase().replace(' ', '').replace('ü', 'u');
                 const registerDate = userData.registerDate
                     ? new Date(userData.registerDate).toLocaleDateString('tr-TR')
@@ -3517,9 +3608,11 @@
                         <td><span class="role-badge role-${roleClass}">${userData.role}</span></td>
                         <td>${registerDate}</td>
                         <td>
+                            ${!isHakan ? `
                             <button class="action-btn btn-edit" onclick="togglePasswordVisibility('${username}', '${userData.password || '?'}', this)" title="Şifreyi Göster">
                                 <i class="fas fa-eye"></i>
                             </button>
+                            ` : ''}
                             ${!isHakan ? `
                                 <button class="action-btn btn-edit" onclick="editUserRole('${username}')">
                                     <i class="fas fa-edit"></i>
@@ -4114,11 +4207,15 @@
             // MediaSession
             if ('mediaSession' in navigator) {
                 const currentSong = playlist[currentSongIndex] || {};
+                const artworkSrc = currentSong.thumbnail || (location.origin + '/logo.png');
                 navigator.mediaSession.metadata = new MediaMetadata({
                     title: title,
                     artist: currentSong.artist || 'H-Sound',
                     album: 'H-Sound',
-                    artwork: currentSong.thumbnail ? [{ src: currentSong.thumbnail, sizes: '300x300', type: 'image/jpeg' }] : []
+                    artwork: [
+                        { src: artworkSrc, sizes: '512x512', type: 'image/png' },
+                        { src: artworkSrc, sizes: '192x192', type: 'image/png' }
+                    ]
                 });
                 navigator.mediaSession.setActionHandler('play', () => audio.play());
                 navigator.mediaSession.setActionHandler('pause', () => audio.pause());
@@ -4294,13 +4391,15 @@
             // ── MediaSession API - Arka plan müzik kontrolü ──────────────
             if ('mediaSession' in navigator) {
                 const currentSong = playlist[currentSongIndex] || {};
+                const artworkSrc = currentSong.thumbnail || (location.origin + '/logo.png');
                 navigator.mediaSession.metadata = new MediaMetadata({
                     title: title,
                     artist: currentSong.artist || 'H-Sound',
                     album: 'H-Sound',
-                    artwork: currentSong.thumbnail ? [
-                        { src: currentSong.thumbnail, sizes: '300x300', type: 'image/jpeg' }
-                    ] : []
+                    artwork: [
+                        { src: artworkSrc, sizes: '512x512', type: 'image/png' },
+                        { src: artworkSrc, sizes: '192x192', type: 'image/png' }
+                    ]
                 });
                 navigator.mediaSession.setActionHandler('play', () => {
                     try { player.playVideo(); } catch(e) {}
@@ -6237,6 +6336,8 @@
             
             if (confirm(`Çıkış yapmak istediğinizden emin misiniz?\n\nHesap: ${username}`)) {
                 localStorage.setItem('h_sound_logged_in', 'false');
+                sessionStorage.removeItem('h_sound_current_view');
+                if (friendRequestUnsubscribe) { friendRequestUnsubscribe(); friendRequestUnsubscribe = null; }
                 showNotification('Güvenli çıkış yapıldı! Görüşmek üzere...', 'info');
                 setTimeout(() => {
                     checkLoginStatus();
@@ -6257,12 +6358,11 @@
 
         window.addEventListener('appinstalled', () => {
             deferredInstallPrompt = null;
+            localStorage.setItem('h_sound_pwa_installed', 'true');
             showNotification('H-Sound başarıyla yüklendi!', 'success');
-            const btn = document.getElementById('pwa-install-btn');
-            if (btn) {
-                btn.innerHTML = '<i class="fas fa-check"></i> Yüklendi';
-                btn.disabled = true;
-            }
+            // Ayarlar sayfası açıksa butonu gizle
+            const section = document.getElementById('pwa-install-section');
+            if (section) section.remove();
         });
 
         function installPWA() {
@@ -6318,19 +6418,11 @@
 
         // Uygulama başlatıldığında varsayılan rol ata ve Hakan hesabını oluştur
         function initializeUserRole() {
-            // Hakan süper admin hesabını oluştur (eğer yoksa)
-            const savedUsers = JSON.parse(localStorage.getItem('h_sound_users') || '{}');
-            
-            if (!savedUsers['Hakan']) {
-                savedUsers['Hakan'] = {
-                    password: 'Hakan5225522541',
-                    role: 'Süper Admin',
-                    registerDate: new Date().toISOString()
-                };
-                localStorage.setItem('h_sound_users', JSON.stringify(savedUsers));
-                console.log('🔥 Hakan super admin account created');
-            }
-            
+            // Firebase'den gelen rolü normalize et (superadmin → Süper Admin)
+            const rawRole = localStorage.getItem('h_sound_role') || localStorage.getItem('h_sound_user_role') || '';
+            const normalizedRole = normalizeRole(rawRole);
+            localStorage.setItem('h_sound_user_role', normalizedRole);
+
             // Mevcut kullanıcının rolünü kontrol et
             if (!localStorage.getItem('h_sound_user_role')) {
                 localStorage.setItem('h_sound_user_role', 'Kullanıcı');
@@ -6344,6 +6436,20 @@
                 } else {
                     superadminLink.classList.add('hidden');
                 }
+            }
+        }
+
+        // Firebase rol değerlerini görüntüleme değerine çevir
+        function normalizeRole(role) {
+            switch((role || '').toLowerCase()) {
+                case 'superadmin':
+                case 'super admin':
+                case 'süper admin': return 'Süper Admin';
+                case 'admin': return 'Admin';
+                case 'vip': return 'VIP';
+                case 'premium': return 'Premium';
+                case 'user': return 'User';
+                default: return 'Kullanıcı';
             }
         }
 
@@ -6437,6 +6543,8 @@
             if (val === 'true' && username) {
                 loginScreen.classList.add('hidden');
                 mainApp.style.display = 'flex';
+                // Listener'ı yeniden kur (kullanıcı değişmiş olabilir)
+                if (typeof setupFriendRequestListener === 'function') setupFriendRequestListener();
             } else {
                 // login.html'e yönlendir
                 window.location.replace('login.html');
@@ -6559,10 +6667,102 @@
         function initializeApp() {
             initializeUserRole();
             setupGlobalThumbnailErrorHandling();
-            showHomePage();
             loadLocalData();
             setupInfiniteScroll();
+
+            // Sayfa yenilenince son menüde kal
+            const savedView = sessionStorage.getItem('h_sound_current_view') || 'home';
+            switch(savedView) {
+                case 'search': showSearchPage(); break;
+                case 'playlists': showPlaylistsPage(); break;
+                case 'friends': showFriendsPage(); break;
+                case 'downloads': showDownloadsPage(); break;
+                case 'recently-played': showRecentlyPlayedPage(); break;
+                case 'settings': showSettingsPage(); break;
+                case 'superadmin': showSuperAdminPage(); break;
+                default: showHomePage();
+            }
+
+            // Firebase'de Hakan'ı superadmin yap
+            setupHakanSuperAdmin();
+
+            // Arkadaşlık isteklerini anlık dinle
+            setupFriendRequestListener();
+
             console.log('🎉 H-Sound ready!');
+        }
+
+        // Firebase'de Hakan hesabını superadmin olarak ayarla
+        async function setupHakanSuperAdmin() {
+            if (!window.db || location.protocol === 'file:') return;
+            try {
+                // Önce UID ile dene (login.html'den kaydedilmiş olabilir)
+                const uid = localStorage.getItem('h_sound_uid');
+                const loggedUsername = localStorage.getItem('h_sound_username');
+
+                if (uid && loggedUsername === 'Hakan') {
+                    await window.db.collection('users').doc(uid).set({
+                        username: 'Hakan',
+                        role: 'superadmin'
+                    }, { merge: true });
+                    console.log('🔥 Hakan (UID) superadmin olarak güncellendi');
+                    return;
+                }
+
+                // UID yoksa username ile ara
+                const snap = await window.db.collection('users').where('username', '==', 'Hakan').limit(1).get();
+                if (!snap.empty) {
+                    const data = snap.docs[0].data();
+                    if (data.role !== 'superadmin') {
+                        await snap.docs[0].ref.update({ role: 'superadmin' });
+                        console.log('🔥 Hakan superadmin olarak güncellendi (Firebase)');
+                    }
+                }
+            } catch(e) { console.log('setupHakanSuperAdmin error:', e); }
+        }
+
+        // Arkadaşlık isteklerini anlık dinle (Firestore onSnapshot)
+        let friendRequestUnsubscribe = null;
+        function setupFriendRequestListener() {
+            if (!window.db || location.protocol === 'file:') return;
+            const currentUser = localStorage.getItem('h_sound_username');
+            if (!currentUser) return;
+
+            // Önceki listener varsa temizle
+            if (friendRequestUnsubscribe) { friendRequestUnsubscribe(); friendRequestUnsubscribe = null; }
+
+            friendRequestUnsubscribe = window.db.collection('friendRequests')
+                .where('to', '==', currentUser)
+                .where('status', '==', 'pending')
+                .onSnapshot(snap => {
+                    const incoming = [];
+                    snap.forEach(doc => incoming.push(doc.data().from));
+
+                    // Yerel listeyi güncelle
+                    incoming.forEach(from => {
+                        if (!friendRequests.includes(from)) friendRequests.push(from);
+                    });
+                    // Artık pending olmayan istekleri çıkar
+                    friendRequests = friendRequests.filter(f => incoming.includes(f));
+                    localStorage.setItem(`h_sound_friend_requests_${currentUser}`, JSON.stringify(friendRequests));
+
+                    // Badge güncelle
+                    const badge = document.getElementById('friend-req-badge');
+                    if (badge) {
+                        badge.textContent = friendRequests.length;
+                        badge.style.display = friendRequests.length > 0 ? 'inline-block' : 'none';
+                    }
+
+                    // Arkadaşlar sayfası açıksa yenile
+                    if (currentView === 'friends') {
+                        const countEl = document.getElementById('requests-count');
+                        if (countEl) {
+                            countEl.textContent = friendRequests.length;
+                            countEl.style.background = friendRequests.length > 0 ? '#E74C3C' : '#555';
+                        }
+                        displayFriendRequests();
+                    }
+                }, err => console.log('friendRequest listener error:', err));
         }
     </script>
 </body>
