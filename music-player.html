@@ -2939,22 +2939,104 @@
             `;
         }
 
+        // Son dinlenenlere şarkı kaydet (max 50)
+        function saveToRecentlyPlayed(videoId, title, thumbnail, artist) {
+            const currentUser = localStorage.getItem('h_sound_username') || 'guest';
+            const key = `h_sound_recently_played_${currentUser}`;
+            let history = JSON.parse(localStorage.getItem(key) || '[]');
+            // Aynı şarkı varsa başa taşı
+            history = history.filter(s => s.videoId !== videoId);
+            history.unshift({ videoId, title, thumbnail, artist, playedAt: Date.now() });
+            if (history.length > 50) history = history.slice(0, 50);
+            localStorage.setItem(key, JSON.stringify(history));
+        }
+
         function showRecentlyPlayedPage() {
             currentView = 'recently-played';
             setActiveLink(recentlyPlayedLink);
             searchContainer.classList.add('hidden');
             clearContentArea();
-            
+            renderRecentlyPlayedPage(false);
+        }
+
+        function renderRecentlyPlayedPage(selectMode) {
+            const currentUser = localStorage.getItem('h_sound_username') || 'guest';
+            const key = `h_sound_recently_played_${currentUser}`;
+            const history = JSON.parse(localStorage.getItem(key) || '[]');
+
+            if (history.length === 0) {
+                contentArea.innerHTML = `
+                    <div class="content-header">
+                        <h2><i class="fas fa-history"></i> Son Dinlenenler</h2>
+                    </div>
+                    <div class="no-content-message">
+                        <i class="fas fa-history" style="font-size:48px;color:var(--primary-color);margin-bottom:20px;"></i>
+                        <h3>Henüz dinlenen müzik yok</h3>
+                        <p>Bir şarkı çaldığında burada görünecek.</p>
+                    </div>`;
+                return;
+            }
+
+            const itemsHTML = history.map((song, i) => {
+                const date = new Date(song.playedAt).toLocaleDateString('tr-TR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+                return `
+                    <div class="download-item recently-item" id="recently-item-${i}" style="${selectMode ? 'cursor:pointer;' : ''}">
+                        ${selectMode ? `<input type="checkbox" class="recently-checkbox" data-index="${i}" style="margin-right:12px;width:18px;height:18px;accent-color:#E74C3C;flex-shrink:0;">` : ''}
+                        <div class="download-info" style="flex:1;min-width:0;${selectMode ? '' : 'cursor:pointer;'}" ${selectMode ? '' : `onclick="playSong('${song.videoId}','${song.title.replace(/'/g,"\\'")}','${song.thumbnail}','${(song.artist||'').replace(/'/g,"\\'")}')"`}>
+                            <img src="${song.thumbnail}" onerror="handleThumbnailError(this)" style="width:45px;height:45px;border-radius:6px;margin-right:12px;object-fit:cover;flex-shrink:0;">
+                            <div style="min-width:0;">
+                                <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${song.title}</div>
+                                <div style="font-size:12px;color:var(--secondary-text-color);">${song.artist || ''} • ${date}</div>
+                            </div>
+                        </div>
+                        ${!selectMode ? `
+                        <button class="download-btn" onclick="playSong('${song.videoId}','${song.title.replace(/'/g,"\\'")}','${song.thumbnail}','${(song.artist||'').replace(/'/g,"\\'")}')">
+                            <i class="fas fa-play"></i>
+                        </button>` : ''}
+                    </div>`;
+            }).join('');
+
             contentArea.innerHTML = `
-                <div class="content-header">
-                    <h2><i class="fas fa-history"></i> Son Dinlenenler</h2>
+                <div class="content-header" style="flex-wrap:wrap;gap:10px;">
+                    <h2><i class="fas fa-history"></i> Son Dinlenenler <span style="font-size:14px;color:var(--secondary-text-color);">(${history.length})</span></h2>
+                    <div style="display:flex;gap:8px;">
+                        ${selectMode ? `
+                            <button onclick="selectAllRecently()" class="setting-btn" style="padding:8px 14px;font-size:13px;">
+                                <i class="fas fa-check-double"></i> Tümünü Seç
+                            </button>
+                            <button onclick="deleteSelectedRecently()" class="btn btn-danger" style="padding:8px 16px;font-size:13px;border-radius:6px;">
+                                <i class="fas fa-trash"></i> Seçilenleri Sil
+                            </button>
+                            <button onclick="renderRecentlyPlayedPage(false)" class="btn btn-secondary" style="padding:8px 14px;font-size:13px;border-radius:6px;">
+                                <i class="fas fa-times"></i> İptal
+                            </button>
+                        ` : `
+                            <button onclick="renderRecentlyPlayedPage(true)" class="setting-btn" style="padding:8px 14px;font-size:13px;">
+                                <i class="fas fa-trash-alt"></i> Sil
+                            </button>
+                        `}
+                    </div>
                 </div>
-                <div class="no-content-message">
-                    <i class="fas fa-history" style="font-size: 48px; color: var(--primary-color); margin-bottom: 20px;"></i>
-                    <h3>Son Dinlenenler</h3>
-                    <p>Henüz dinlenen müzik yok.</p>
-                </div>
-            `;
+                <div style="display:flex;flex-direction:column;gap:8px;">${itemsHTML}</div>`;
+        }
+
+        function selectAllRecently() {
+            const boxes = document.querySelectorAll('.recently-checkbox');
+            const allChecked = Array.from(boxes).every(b => b.checked);
+            boxes.forEach(b => b.checked = !allChecked);
+        }
+
+        function deleteSelectedRecently() {
+            const boxes = document.querySelectorAll('.recently-checkbox:checked');
+            if (boxes.length === 0) { showNotification('Hiçbir şarkı seçilmedi!', 'warning'); return; }
+            const indices = Array.from(boxes).map(b => parseInt(b.dataset.index));
+            const currentUser = localStorage.getItem('h_sound_username') || 'guest';
+            const key = `h_sound_recently_played_${currentUser}`;
+            let history = JSON.parse(localStorage.getItem(key) || '[]');
+            history = history.filter((_, i) => !indices.includes(i));
+            localStorage.setItem(key, JSON.stringify(history));
+            showNotification(`${indices.length} şarkı silindi`, 'success');
+            renderRecentlyPlayedPage(history.length > 0);
         }
 
         function showSettingsPage() {
@@ -3979,6 +4061,9 @@
         }
         function playSong(videoId, title, thumbnail, artist = 'Bilinmeyen Sanatçı') {
             console.log(`🎵 Playing song: ${title} by ${artist} (ID: ${videoId})`);
+
+            // Son dinlenenlere kaydet
+            saveToRecentlyPlayed(videoId, title, thumbnail, artist);
             
             // Update player info immediately
             songTitle.textContent = title;
@@ -6896,12 +6981,13 @@
 
         // Arkadaşlık isteklerini anlık dinle (Firestore onSnapshot)
         let friendRequestUnsubscribe = null;
+        let friendListUnsubscribe = null;
+
         function setupFriendRequestListener() {
             if (!window.db || location.protocol === 'file:') return;
             const currentUser = localStorage.getItem('h_sound_username');
             if (!currentUser) return;
 
-            // Önceki listener varsa temizle
             if (friendRequestUnsubscribe) { friendRequestUnsubscribe(); friendRequestUnsubscribe = null; }
 
             friendRequestUnsubscribe = window.db.collection('friendRequests')
@@ -6911,22 +6997,18 @@
                     const incoming = [];
                     snap.forEach(doc => incoming.push(doc.data().from));
 
-                    // Yerel listeyi güncelle
                     incoming.forEach(from => {
                         if (!friendRequests.includes(from)) friendRequests.push(from);
                     });
-                    // Artık pending olmayan istekleri çıkar
                     friendRequests = friendRequests.filter(f => incoming.includes(f));
                     localStorage.setItem(`h_sound_friend_requests_${currentUser}`, JSON.stringify(friendRequests));
 
-                    // Badge güncelle
                     const badge = document.getElementById('friend-req-badge');
                     if (badge) {
                         badge.textContent = friendRequests.length;
                         badge.style.display = friendRequests.length > 0 ? 'inline-block' : 'none';
                     }
 
-                    // Arkadaşlar sayfası açıksa yenile
                     if (currentView === 'friends') {
                         const countEl = document.getElementById('requests-count');
                         if (countEl) {
@@ -6936,6 +7018,25 @@
                         displayFriendRequests();
                     }
                 }, err => console.log('friendRequest listener error:', err));
+
+            // Arkadaş listesini anlık dinle — karşı taraf kaldırınca burada da düşsün
+            if (friendListUnsubscribe) { friendListUnsubscribe(); friendListUnsubscribe = null; }
+
+            friendListUnsubscribe = window.db.collection('userFriends').doc(currentUser)
+                .onSnapshot(doc => {
+                    if (!doc.exists) return;
+                    const fbFriends = doc.data().friends || [];
+                    // Kaldırılan arkadaşları yerel listeden de çıkar
+                    const removed = friends.filter(f => !fbFriends.includes(f));
+                    if (removed.length > 0) {
+                        friends = friends.filter(f => fbFriends.includes(f));
+                        localStorage.setItem(`h_sound_friends_${currentUser}`, JSON.stringify(friends));
+                        removed.forEach(name => {
+                            showNotification(`${name} sizi arkadaş listesinden çıkardı`, 'info');
+                        });
+                        if (currentView === 'friends') renderFriendsPage();
+                    }
+                }, () => {});
         }
     </script>
 </body>
