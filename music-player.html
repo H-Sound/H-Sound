@@ -3707,9 +3707,6 @@
                                 <button class="action-btn btn-promote" onclick="changeUserPassword('${username}')">
                                     <i class="fas fa-key"></i>
                                 </button>
-                                <button class="action-btn ${isBanned ? 'btn-promote' : 'btn-delete'}" onclick="toggleBanUser('${username}')">
-                                    <i class="fas fa-${isBanned ? 'unlock' : 'ban'}"></i> ${isBanned ? 'Banı Kaldır' : 'Banla'}
-                                </button>
                                 <button class="action-btn btn-delete" onclick="deleteUser('${username}')">
                                     <i class="fas fa-trash"></i>
                                 </button>
@@ -3757,21 +3754,45 @@
                     <h3 style="margin-top:0;color:var(--primary-color);"><i class="fas fa-key"></i> Şifre Değiştir - ${username}</h3>
                     <div class="form-group">
                         <label class="form-label">Yeni Şifre</label>
-                        <input type="text" id="new-pw-input" class="form-input" placeholder="Yeni şifre girin...">
+                        <input type="text" id="new-pw-input" class="form-input" placeholder="Yeni şifre girin (min 6 karakter)">
                     </div>
-                    <button class="btn" onclick="
-                        const pw = document.getElementById('new-pw-input').value.trim();
-                        if(!pw){return;}
-                        const users = JSON.parse(localStorage.getItem('h_sound_users')||'{}');
-                        if(users['${username}']){users['${username}'].password=pw;localStorage.setItem('h_sound_users',JSON.stringify(users));}
-                        showNotification('${username} şifresi değiştirildi!','success');
-                        this.closest('.modal').remove();
-                        showSuperAdminPage();
-                    "><i class="fas fa-save"></i> Kaydet</button>
+                    <button class="btn" id="save-pw-btn" onclick="saveNewPassword('${username}', this)">
+                        <i class="fas fa-save"></i> Kaydet
+                    </button>
                 </div>
             `;
             document.body.appendChild(modal);
             setTimeout(() => modal.querySelector('#new-pw-input')?.focus(), 100);
+        }
+
+        async function saveNewPassword(username, btn) {
+            const pw = document.getElementById('new-pw-input')?.value.trim();
+            if (!pw) { showNotification('Şifre boş olamaz!', 'warning'); return; }
+            if (pw.length < 6) { showNotification('Şifre en az 6 karakter olmalı!', 'warning'); return; }
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Kaydediliyor...';
+
+            // localStorage güncelle
+            const users = JSON.parse(localStorage.getItem('h_sound_users') || '{}');
+            if (users[username]) {
+                users[username].password = pw;
+                localStorage.setItem('h_sound_users', JSON.stringify(users));
+            }
+
+            // Firebase Firestore güncelle
+            if (window._firebaseReady && window.db) {
+                try {
+                    const snap = await window.db.collection('users').where('username', '==', username).limit(1).get();
+                    if (!snap.empty) {
+                        await snap.docs[0].ref.update({ password: pw });
+                    }
+                } catch(e) { console.log('changeUserPassword Firestore error:', e); }
+            }
+
+            showNotification(`${username} şifresi değiştirildi!`, 'success');
+            btn.closest('.modal').remove();
+            showSuperAdminPage();
         }
 
         // Search function (YouTube API + Local Database)
@@ -6380,13 +6401,11 @@
         }
 
         // Hesabı sil (Hakan hesabı koruması ile)
-        function deleteAccount() {
+        async function deleteAccount() {
             const username = localStorage.getItem('h_sound_username') || 'Kullanıcı';
             
-            // Hakan hesabı koruması
             if (username === 'Hakan') {
                 showNotification('⚠️ Hakan hesabı silinemez!', 'error');
-                alert('🔒 GÜVENLİK KORUMASI\n\nHakan hesabı sistem güvenliği için silinemez.\nBu hesap H-Sound\'un ana yönetici hesabıdır.');
                 return;
             }
             
@@ -6394,28 +6413,37 @@
             
             if (confirm(`⚠️ HESAP SİLME UYARISI\n\nHesabınız: ${username}\nRol: ${userRole}\n\nHesabınız kalıcı olarak silinecek!\nTüm verileriniz kaybolacak.\n\nDevam etmek istiyor musunuz?`)) {
                 if (confirm('🚨 SON ONAY\n\nGerçekten hesabınızı silmek istiyor musunuz?\nBu işlem GERİ ALINAMAZ!')) {
-                    // Kullanıcıyı users listesinden sil
+                    // Firebase'den sil
+                    if (window._firebaseReady && window.db) {
+                        try {
+                            const uid = localStorage.getItem('h_sound_uid');
+                            if (uid) {
+                                await window.db.collection('users').doc(uid).delete().catch(() => {});
+                                await window.db.collection('userFriends').doc(username).delete().catch(() => {});
+                            }
+                            // Firebase Auth'dan sil
+                            if (window.auth && window.auth.currentUser) {
+                                await window.auth.currentUser.delete().catch(() => {});
+                            }
+                        } catch(e) { console.log('deleteAccount Firebase error:', e); }
+                    }
+
+                    // localStorage temizle
                     const savedUsers = JSON.parse(localStorage.getItem('h_sound_users') || '{}');
                     delete savedUsers[username];
                     localStorage.setItem('h_sound_users', JSON.stringify(savedUsers));
-                    
-                    // Kullanıcının tüm verilerini sil
-                    const allKeys = Object.keys(localStorage);
-                    allKeys.forEach(key => {
-                        if (key.startsWith('h_sound_') && !key.includes('users')) {
+                    Object.keys(localStorage).forEach(key => {
+                        if (key.startsWith('h_sound_') && key !== 'h_sound_users') {
                             localStorage.removeItem(key);
                         }
                     });
-                    
-                    // Global değişkenleri sıfırla
+
                     friends = [];
                     downloadedSongs = [];
                     privacyAccepted = false;
-                    
+
                     showNotification('Hesabınız başarıyla silindi!', 'info');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 2000);
+                    setTimeout(() => { window.location.replace('login.html'); }, 1500);
                 }
             }
         }
@@ -6686,15 +6714,22 @@
         }
 
         async function confirmDeleteUser(username) {
+            // localStorage'dan sil
             const savedUsers = JSON.parse(localStorage.getItem('h_sound_users') || '{}');
             delete savedUsers[username];
             localStorage.setItem('h_sound_users', JSON.stringify(savedUsers));
 
-            if (window.db && location.protocol !== 'file:') {
+            // Firebase'den sil (UID ile)
+            if (window._firebaseReady && window.db) {
                 try {
-                    await window.db.collection('users').doc(username).delete().catch(() => {});
+                    // username ile dokümanı bul, UID'yi al
+                    const snap = await window.db.collection('users').where('username', '==', username).limit(1).get();
+                    if (!snap.empty) {
+                        const docRef = snap.docs[0].ref;
+                        await docRef.delete().catch(() => {});
+                    }
                     await window.db.collection('userFriends').doc(username).delete().catch(() => {});
-                } catch(e) {}
+                } catch(e) { console.log('confirmDeleteUser error:', e); }
             }
 
             showNotification(`${username} silindi!`, 'success');
