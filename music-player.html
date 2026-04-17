@@ -3004,7 +3004,7 @@
                                 <div class="setting-item">
                                     <div class="setting-info">
                                         <div class="setting-title">Hesap Rolü</div>
-                                        <div class="setting-desc">${userRole}</div>
+                                        <div class="setting-desc" style="margin-top:8px;">${getRoleBadgeHTML(userRole)}</div>
                                     </div>
                                     <button class="setting-btn" onclick="showRoleInfo()">
                                         <i class="fas fa-info-circle"></i> Bilgi
@@ -3571,7 +3571,7 @@
                 const isOn = doc.exists && doc.data().enabled === true;
                 await window.db.collection('settings').doc('maintenance').set({ enabled: !isOn });
                 updateMaintenanceBtn(!isOn);
-                showNotification(isOn ? '✅ Bakım modu kapatıldı' : '🔧 Bakım modu açıldı', isOn ? 'success' : 'warning');
+                showNotification(isOn ? '✅ Bakım modu kapatıldı' : '🔧 Bakım modu açıldı — Diğer kullanıcılar atılacak', isOn ? 'success' : 'warning');
             } catch(e) {
                 showNotification('Hata: ' + e.message, 'error');
             } finally {
@@ -6453,6 +6453,71 @@
             }
         }
 
+        // Rol rozeti HTML'i
+        function getRoleBadgeHTML(role) {
+            const badges = {
+                'Süper Admin': {
+                    icon: 'fas fa-crown',
+                    label: 'Süper Admin',
+                    bg: 'linear-gradient(135deg, #E74C3C, #C0392B)',
+                    glow: 'rgba(231,76,60,0.4)',
+                    extra: '✦ Tam Yetki'
+                },
+                'Admin': {
+                    icon: 'fas fa-shield-alt',
+                    label: 'Admin',
+                    bg: 'linear-gradient(135deg, #E67E22, #D35400)',
+                    glow: 'rgba(230,126,34,0.4)',
+                    extra: 'Yönetici'
+                },
+                'VIP': {
+                    icon: 'fas fa-gem',
+                    label: 'VIP',
+                    bg: 'linear-gradient(135deg, #9B59B6, #8E44AD)',
+                    glow: 'rgba(155,89,182,0.4)',
+                    extra: 'Özel Üye'
+                },
+                'Premium': {
+                    icon: 'fas fa-star',
+                    label: 'Premium',
+                    bg: 'linear-gradient(135deg, #3498DB, #2980B9)',
+                    glow: 'rgba(52,152,219,0.4)',
+                    extra: 'Premium Üye'
+                },
+                'User': {
+                    icon: 'fas fa-user-check',
+                    label: 'User',
+                    bg: 'linear-gradient(135deg, #27AE60, #229954)',
+                    glow: 'rgba(39,174,96,0.4)',
+                    extra: 'Kayıtlı Üye'
+                },
+                'Kullanıcı': {
+                    icon: 'fas fa-user',
+                    label: 'Kullanıcı',
+                    bg: 'linear-gradient(135deg, #7F8C8D, #636E72)',
+                    glow: 'rgba(127,140,141,0.3)',
+                    extra: 'Standart'
+                }
+            };
+            const b = badges[role] || badges['Kullanıcı'];
+            return `
+                <span style="
+                    display:inline-flex;align-items:center;gap:8px;
+                    background:${b.bg};
+                    color:white;
+                    padding:6px 14px;
+                    border-radius:20px;
+                    font-size:13px;
+                    font-weight:700;
+                    box-shadow:0 0 12px ${b.glow};
+                    letter-spacing:0.5px;
+                ">
+                    <i class="${b.icon}"></i> ${b.label}
+                </span>
+                <span style="color:#A9A9A9;font-size:12px;margin-left:8px;">${b.extra}</span>
+            `;
+        }
+
         // SÜPER ADMİN FONKSİYONLARI
 
         // Kullanıcı şifresini göster
@@ -6465,8 +6530,7 @@
             const savedUsers = JSON.parse(localStorage.getItem('h_sound_users') || '{}');
             const currentRole = savedUsers[username].role;
             
-            // Admin ve Süper Admin rolleri verilemez - sadece Hakan süper admin
-            const roles = ['Kullanıcı', 'User', 'Premium', 'VIP'];
+            const roles = ['User', 'Premium', 'VIP'];
             let roleOptions = '';
             roles.forEach(role => {
                 roleOptions += `${role === currentRole ? '✓ ' : ''}${role}\n`;
@@ -6477,8 +6541,24 @@
             if (newRole && roles.includes(newRole)) {
                 savedUsers[username].role = newRole;
                 localStorage.setItem('h_sound_users', JSON.stringify(savedUsers));
+
+                // Firebase'e de yaz
+                if (window._firebaseReady && window.db) {
+                    window.db.collection('users').where('username', '==', username).limit(1).get()
+                        .then(snap => {
+                            if (!snap.empty) snap.docs[0].ref.update({ role: newRole });
+                        }).catch(() => {});
+                }
+
+                // Eğer değiştirilen kullanıcı şu an giriş yapmışsa localStorage'ını güncelle
+                const loggedUser = localStorage.getItem('h_sound_username');
+                if (loggedUser === username) {
+                    localStorage.setItem('h_sound_role', newRole);
+                    localStorage.setItem('h_sound_user_role', normalizeRole(newRole));
+                }
+
                 showNotification(`${username} kullanıcısının rolü "${newRole}" olarak değiştirildi!`, 'success');
-                showSuperAdminPage(); // Sayfayı yenile
+                showSuperAdminPage();
             } else if (newRole) {
                 showNotification('Geçersiz rol! Lütfen listeden bir rol seçin.', 'error');
             }
@@ -6541,12 +6621,30 @@
             const mainApp = document.getElementById('main-app');
 
             if (val === 'true' && username) {
-                loginScreen.classList.add('hidden');
-                mainApp.style.display = 'flex';
-                // Listener'ı yeniden kur (kullanıcı değişmiş olabilir)
-                if (typeof setupFriendRequestListener === 'function') setupFriendRequestListener();
+                // Bakım modu kontrolü (giriş yapmış kullanıcılar için)
+                if (window._firebaseReady && window.db) {
+                    window.db.collection('settings').doc('maintenance').get().then(doc => {
+                        const isOn = doc.exists && doc.data().enabled === true;
+                        const role = localStorage.getItem('h_sound_role') || '';
+                        if (isOn && role !== 'superadmin') {
+                            localStorage.setItem('h_sound_logged_in', 'false');
+                            window.location.replace('login.html');
+                            return;
+                        }
+                        loginScreen.classList.add('hidden');
+                        mainApp.style.display = 'flex';
+                        if (typeof setupFriendRequestListener === 'function') setupFriendRequestListener();
+                    }).catch(() => {
+                        loginScreen.classList.add('hidden');
+                        mainApp.style.display = 'flex';
+                        if (typeof setupFriendRequestListener === 'function') setupFriendRequestListener();
+                    });
+                } else {
+                    loginScreen.classList.add('hidden');
+                    mainApp.style.display = 'flex';
+                    if (typeof setupFriendRequestListener === 'function') setupFriendRequestListener();
+                }
             } else {
-                // login.html'e yönlendir
                 window.location.replace('login.html');
             }
         }
