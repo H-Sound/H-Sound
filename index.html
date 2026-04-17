@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H-Sound</title>
+    <script>
+        // Giriş yapılmışsa music-player.html'e, yoksa login.html'e yönlendir
+        const loggedIn = localStorage.getItem('h_sound_logged_in');
+        if (loggedIn === 'true') {
+            window.location.replace('music-player.html');
+        } else {
+            window.location.replace('login.html');
+        }
+    </script>
+</head>
+<body>
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#1A1A1A;color:#3498DB;font-family:sans-serif;">
+        <div style="text-align:center;">
+            <div style="font-size:48px;margin-bottom:10px;">♪</div>
+            <div>H-Sound yükleniyor...</div>
+        </div>
+    </div>
+</body>
+</html>
